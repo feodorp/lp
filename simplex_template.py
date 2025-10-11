@@ -19,27 +19,74 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
         basis = list(range(n, n + m))
         nbasis = list(range(0, n))
 
-    while True:
+    tmp = 0
+    while tmp < 100:
+        tmp += 1
+
+        B = A[:, basis]
+        N = A[:, nbasis]
+        cB = c[basis]
+        cN = c[nbasis]
+
+        try:
+            bbar = np.linalg.solve(B, b)
+            y = np.linalg.solve(B.T, cB)
+            rN = cN - (N.T).dot(y)
+            z0 = cB.T.dot(bbar)
+        except:
+            return "infeasible", None, None
         # Подсказка: np.linalg.solve(M, v) решает систему Mx = v
 
         # TODO: Посчитать reduced cost's 
-        reduced_cost = ...
+        reduced_cost = rN
+
+        # Проверка на оптимальность решения
+        if np.all(reduced_cost <= eps):
+            x = np.zeros(n + m)
+            for i, bi in enumerate(basis):
+                x[bi] = bbar[i]
+            obj = c.dot(x)
+            return "optimal", x, obj
 
         # TODO: Находим кандидата для входа в базис
-        entering_index = ...
+        # Использую правило Блэнда
+        entering_index = 0
+        for i, val in enumerate(reduced_cost):
+            if val > eps:
+                entering_index = i
+                break
+        
 
         # TODO: Вычисляем направление, не забывая детектировать unbounded
-        d = ...
+        aj = A[:, entering_index]
+        d = np.linalg.solve(B, aj)
+
+        if np.all(d <= eps):
+            return "unbounded", None, None
 
         # TODO: Найти кандидата для выхода из базиса
-        leaving_index = ...
+        min_i = 0
+        min_rat = np.inf
+        for i, d_i in enumerate(d):
+            if d_i > eps:
+                rat = bbar[i] / d_i
+                if rat < min_rat:
+                    min_rat = rat
+                    min_i = i
+
+        leaving_index = min_i
+        
         
         # TODO: Обновляем basis и nbasis
-        basis = ...
-        nbasis = ...
+        entering_var = nbasis[entering_index]
+        leaving_var = basis[leaving_index]
+
+        basis[leaving_index] = entering_var
+        nbasis[entering_index] = leaving_var
 
     # TODO: Восстановить исходную систему, восстановить x и вернуть результат
-    return "optimal", ..., ...
+    # (сделано в теле while)
+    return "iteration limit", None, None
 
 
 def Phase1(c, A, b):
@@ -63,8 +110,12 @@ def Phase1(c, A, b):
 
 
 def Solve(c, A, b):
+    m, n = A.shape
+
+    A = np.hstack([A, np.eye(m)])
+    c = np.hstack([c, np.zeros(m)])
+
     if np.all(b >= 0):
-        # TODO: Добавляем слаки в систему
         return PrimalSimplex(c, A, b)
     
     # Иначе запускаем фазу 1
@@ -77,8 +128,10 @@ def proc_cmd():
 
 def main():
     # boilerplate for reading input data
-    args = proc_cmd()
-    with open(args.filename, 'r', encoding='utf-8') as f:
+
+    # args = proc_cmd()
+    # with open(args.filename, 'r', encoding='utf-8') as f:
+    with open("example_phase2.txt", 'r', encoding='utf-8') as f:
         n, m = map(int, f.readline().split())
         c = np.array(list(map(float, f.readline().split())))
         A = []
