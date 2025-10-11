@@ -35,7 +35,6 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
             z0 = cB.T.dot(bbar)
         except:
             return "infeasible", None, None
-        # Подсказка: np.linalg.solve(M, v) решает систему Mx = v
 
         # TODO: Посчитать reduced cost's 
         reduced_cost = rN
@@ -90,21 +89,41 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
 
 
 def Phase1(c, A, b):
+    m, n = A.shape
+    n -= m
     # TODO: Создаем вспомогательную задачу
-    new_c = ...
-    new_A = ...
-    basis = ...
-    nbasis = ...
+    new_c = np.zeros(n + m + 1)
+    new_c[0] = -1
+    new_A = np.zeros((m, n + m + 1))
+    new_A[:, 1::] = A
+    new_A[:, 0] = -1
+    
+    min_i = 0
+    min_b = np.inf
+    for i, b_i in enumerate(b):
+        if b_i < min_b:
+            min_b = b_i
+            min_i = i
+
+    p = min_i
+
+    basis = list(range(n + 1, n + m + 1))
+    nbasis = list(range(0, n + 1))
+
+    entering_var = nbasis[0]
+    leaving_var = basis[p]
+
+    basis[p] = entering_var
+    nbasis[0] = leaving_var
+    
 
     status, x, obj = PrimalSimplex(new_c, new_A, b, basis, nbasis)
     if status != "optimal" or obj > eps:
         return "infeasible", None, None
     
     # TODO: Нужно восстановить исходную задачу
-    c = ...
-    A = ...
-    basis = ...
-    nbasis = ...
+    basis = [idx - 1 for idx in basis if idx != 0]
+    nbasis = [idx - 1 for idx in nbasis if idx != 0]
 
     return PrimalSimplex(c, A, b, basis, nbasis)
 
@@ -131,7 +150,7 @@ def main():
 
     # args = proc_cmd()
     # with open(args.filename, 'r', encoding='utf-8') as f:
-    with open("example_phase2.txt", 'r', encoding='utf-8') as f:
+    with open("example_phase1.txt", 'r', encoding='utf-8') as f:
         n, m = map(int, f.readline().split())
         c = np.array(list(map(float, f.readline().split())))
         A = []
