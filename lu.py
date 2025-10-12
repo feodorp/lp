@@ -26,14 +26,12 @@ def forward(L, b):
     return x
 
 def back(U, b):
-    n = U.shape[0]
-    x = np.zeros(n)
-    for i in range(n-1, -1, -1):
-        denom = U[i, i]
-        if abs(denom) < eps:
-            x[i] = 0.0
-        else:
-            x[i] = (b[i] - U[i, i+1:].dot(x[i+1:])) / denom
+    m = U.shape[0]
+    x = b.copy()
+    for i in range(m-1, -1, -1):
+        for j in range(i+1, m):
+            x[i] -= U[i, j] * x[j]
+        x[i] /= U[i, i]
     return x
 
 def back_t(LT, b):
@@ -41,17 +39,15 @@ def back_t(LT, b):
     x = b.copy()
     for i in range(m-1, -1, -1):
         for j in range(i+1, m):
-            x[i] -= LT[j, i] * x[j]
+            x[i] -= LT[j, i] * x[j] 
     return x
 
 def forward_t(UT, b):
     m = UT.shape[0]
     x = b.copy()
     for i in range(m):
-        if abs(UT[i, i]) < eps:
-            x[i] = 0.0
         for j in range(i):
-            x[i] -= UT[j, i] * x[j]
+            x[i] -= UT[j, i] * x[j] 
         x[i] /= UT[i, i]
     return x
 
