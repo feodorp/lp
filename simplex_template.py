@@ -89,7 +89,7 @@ class LU:
             piv = H[k - 1, p]
             if abs(piv) < eps:
                 return False
-            alpha = H[k-1, p] / piv
+            alpha = H[k, p] / piv
             if abs(alpha) > 0.0:
                 H[k, p:] -= alpha * H[k - 1, p:]
                 L[:, k - 1] += alpha * L[:, k]
