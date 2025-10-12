@@ -3,6 +3,39 @@ import argparse
 
 eps = 1e-9
 
+
+
+# =========================================
+#                Фаза I
+# =========================================
+def Phase1(c, A, b):
+    m, n = A.shape
+    I = np.eye(m)
+    A_ext = np.hstack([A, I])
+    a0 = -np.ones((m, 1))
+    A_aux = np.hstack([A_ext, a0])
+    c_aux = np.hstack([np.zeros(n + m), -1.0])
+    p = int(np.argmin(b))
+    x0_col = n + m
+    basis = list(range(n, n + m))
+    basis[p] = x0_col
+    nbasis = [j for j in range(n + m + 1) if j not in basis]
+    status, _, obj = PrimalSimplex(c_aux, A_aux, b, basis, nbasis)
+    if status != "optimal" or obj > eps:
+        return "infeasible", None, None
+    A_no_x0 = A_aux[:, :n + m]
+    basis_wo = []
+    for idx in basis:
+        if idx == x0_col:
+            basis_wo.append(n)
+        elif idx < x0_col:
+            basis_wo.append(idx)
+        else:
+            basis_wo.append(idx - 1)
+    nbasis_wo = [j for j in range(n + m) if j not in basis_wo]
+    c_ext = np.hstack([c, np.zeros(m)])
+    return PrimalSimplex(c_ext, A_no_x0, b, basis_wo, nbasis_wo)
+
 # =========================================
 #   Прямой симплекс-метод (Фаза II)
 # =========================================
@@ -55,38 +88,6 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
         basis[p_row] = entering_index
         nbasis[entering_pos] = leaving_index
     return "infeasible", None, None
-
-
-# =========================================
-#                Фаза I
-# =========================================
-def Phase1(c, A, b):
-    m, n = A.shape
-    I = np.eye(m)
-    A_ext = np.hstack([A, I])
-    a0 = -np.ones((m, 1))
-    A_aux = np.hstack([A_ext, a0])
-    c_aux = np.hstack([np.zeros(n + m), -1.0])
-    p = int(np.argmin(b))
-    x0_col = n + m
-    basis = list(range(n, n + m))
-    basis[p] = x0_col
-    nbasis = [j for j in range(n + m + 1) if j not in basis]
-    status, _, obj = PrimalSimplex(c_aux, A_aux, b, basis, nbasis)
-    if status != "optimal" or obj > eps:
-        return "infeasible", None, None
-    A_no_x0 = A_aux[:, :n + m]
-    basis_wo = []
-    for idx in basis:
-        if idx == x0_col:
-            basis_wo.append(n)
-        elif idx < x0_col:
-            basis_wo.append(idx)
-        else:
-            basis_wo.append(idx - 1)
-    nbasis_wo = [j for j in range(n + m) if j not in basis_wo]
-    c_ext = np.hstack([c, np.zeros(m)])
-    return PrimalSimplex(c_ext, A_no_x0, b, basis_wo, nbasis_wo)
 
 
 # =========================================
