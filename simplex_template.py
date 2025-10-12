@@ -8,7 +8,7 @@ EPS = 1e-9
 
 
 # ===================================================
-#                 LU-разложение + solve
+#            LU-РАЗЛОЖЕНИЕ И РЕШЕНИЕ СЛАУ
 # ===================================================
 
 def lu_decompose(A: np.ndarray):
@@ -17,7 +17,6 @@ def lu_decompose(A: np.ndarray):
     P = np.eye(n)
     L = np.zeros((n, n))
     U = A.copy()
-
     for k in range(n):
         pivot = np.argmax(np.abs(U[k:, k])) + k
         if abs(U[pivot, k]) < 1e-14:
@@ -58,7 +57,8 @@ def invert_via_lu(B: np.ndarray) -> np.ndarray:
 
 
 # ===================================================
-#             Шерман–Моррисон 
+#          ОБНОВЛЕНИЕ МАТРИЦЫ ПО ФОРМУЛЕ
+#               ШЕРМАНА–МОРРИСОНА
 # ===================================================
 
 def sherman_morrison_update(B_inv: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarray:
@@ -73,50 +73,43 @@ def sherman_morrison_update(B_inv: np.ndarray, u: np.ndarray, v: np.ndarray) -> 
 
 
 # ===================================================
-#            Проверка
+#             РЕВИЗОВАННЫЙ СИМПЛЕКС-МЕТОД
 # ===================================================
 
 def revised_simplex(A: np.ndarray, b: np.ndarray, c: np.ndarray,
                     B_idx=None, N_idx=None):
     m, total = A.shape
     n = total - m
-
     if B_idx is None:
         B_idx = list(range(n, n + m))
     if N_idx is None:
         N_idx = [j for j in range(total) if j not in B_idx]
-
     B = A[:, B_idx]
     try:
         B_inv = invert_via_lu(B)
     except np.linalg.LinAlgError:
         return "infeasible", None, None
-
     it_lim = 20000
     for _ in range(it_lim):
         b_bar = B_inv @ b
         c_B = c[B_idx]
         y = B_inv.T @ c_B
-
         r = np.zeros(total)
         if N_idx:
             A_N = A[:, N_idx]
             r_N = c[N_idx] - A_N.T @ y
             r[N_idx] = r_N
-
         entering_candidates = [j for j in N_idx if r[j] > EPS]
         if not entering_candidates:
             x_full = np.zeros(total)
             for pos, j in enumerate(B_idx):
                 x_full[j] = b_bar[pos]
             return "optimal", x_full[:n], float(c @ x_full)
-
         j_enter = min(entering_candidates)
         a_j = A[:, j_enter]
         d = B_inv @ a_j
         if np.all(d <= EPS):
             return "unbounded", None, None
-
         theta = np.inf
         p_row = -1
         tie_indices = []
@@ -133,13 +126,11 @@ def revised_simplex(A: np.ndarray, b: np.ndarray, c: np.ndarray,
             return "unbounded", None, None
         if len(tie_indices) > 1:
             p_row = min(tie_indices, key=lambda i: B_idx[i])
-
         j_leave = B_idx[p_row]
         b_p = A[:, j_leave]
         u = a_j - b_p
         e_p = np.zeros(m)
         e_p[p_row] = 1.0
-
         try:
             B_inv = sherman_morrison_update(B_inv, u, e_p)
         except np.linalg.LinAlgError:
@@ -149,58 +140,43 @@ def revised_simplex(A: np.ndarray, b: np.ndarray, c: np.ndarray,
                 B_inv = invert_via_lu(B)
             except np.linalg.LinAlgError:
                 return "infeasible", None, None
-
         B_idx[p_row] = j_enter
         N_idx = [j for j in range(total) if j not in B_idx]
-
     return "infeasible", None, None
 
 
 # ===================================================
-#                  Фаза I
+#                    ФАЗА I
 # ===================================================
 
 def phase1(c: np.ndarray, A: np.ndarray, b: np.ndarray):
     m, n = A.shape
     I = np.eye(m)
-    A_ext = np.hstack([A, I])
-    a0 = -np.ones((m, 1))
-    A_aux = np.hstack([A_ext, a0])
-    c_aux = np.hstack([np.zeros(n + m), -1.0])
-
-    p = int(np.argmin(b))
-    x0_col = n + m
-    B_idx = list(range(n, n + m))
-    B_idx[p] = x0_col
-    N_idx = [j for j in range(n + m + 1) if j not in B_idx]
-
-    status_I, _, obj_I = revised_simplex(A_aux, b, c_aux, B_idx, N_idx)
-    if status_I != "optimal" or obj_I > EPS:
+    A_full = np.hstack([A, I, I])
+    c_full = np.hstack([np.zeros(n + m), -np.ones(m)])
+    B_idx = list(range(n + m, n + m + m))
+    N_idx = [j for j in range(n + m + m) if j not in B_idx]
+    status_I, x_full, obj_I = revised_simplex(A_full, b, c_full, B_idx, N_idx)
+    PHASE1_EPS = 1e-7
+    if status_I != "optimal" or obj_I > PHASE1_EPS:
         return "infeasible", None, None
-
-    A_no_x0 = A_aux[:, :n + m]
-    B_idx2 = []
-    for j in B_idx:
-        if j == x0_col:
-            B_idx2.append(n)
-        elif j < x0_col:
-            B_idx2.append(j)
-        else:
-            B_idx2.append(j - 1)
+    A_no_a = A_full[:, :n + m]
+    B_idx2 = [j for j in B_idx if j < n + m]
+    if not B_idx2:
+        B_idx2 = list(range(n, n + m))
     N_idx2 = [j for j in range(n + m) if j not in B_idx2]
     c_ext = np.hstack([c, np.zeros(m)])
-    return revised_simplex(A_no_x0, b, c_ext, B_idx2, N_idx2)
+    return revised_simplex(A_no_a, b, c_ext, B_idx2, N_idx2)
 
 
 # ===================================================
-#                Основное решение
+#                    ФАЗА II
 # ===================================================
 
 def Solve(c: np.ndarray, A: np.ndarray, b: np.ndarray):
     c = np.asarray(c, dtype=float)
     A = np.asarray(A, dtype=float)
     b = np.asarray(b, dtype=float)
-
     m, n = A.shape
     if np.all(b >= -EPS):
         I = np.eye(m)
@@ -212,14 +188,13 @@ def Solve(c: np.ndarray, A: np.ndarray, b: np.ndarray):
 
 
 # ===================================================
-#               CLI и вывод
+#                ОСНОВНОЙ ВЫЗОВ (CLI)
 # ===================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Solve a linear program using the Revised Simplex method (Phase I/II, Sherman–Morrison + LU).")
-    parser.add_argument("filename", type=str, help="Input file containing the LP problem.")
+    parser = argparse.ArgumentParser(description="Решение задачи ЛП симплекс-методом (Phase I/II, Sherman–Morrison + LU).")
+    parser.add_argument("filename", type=str, help="Имя входного файла с задачей ЛП.")
     args = parser.parse_args()
-
     with open(args.filename, 'r', encoding='utf-8') as f:
         n, m = map(int, f.readline().split())
         c = np.array(list(map(float, f.readline().split())))
@@ -231,29 +206,26 @@ def main():
             b.append(bi)
         A = np.array(A, dtype=float)
         b = np.array(b, dtype=float)
-
-    print("===== INPUT DATA =====")
+    print("========== ВХОДНЫЕ ДАННЫЕ ==========")
     print(f"n = {n}")
     print(f"m = {m}")
     print(f"c = {c}")
     print("A =")
     print(A)
     print(f"b = {b}")
-    print("======================\n")
-
-    print("Solving the linear program (Phase I/II, Sherman–Morrison + LU)...\n")
+    print("====================================\n")
+    print("Решение задачи линейного программирования...\n")
     status, x, obj = Solve(c, A, b)
-
-    print("===== RESULT =====")
-    print("Status:", status)
+    print("============= РЕЗУЛЬТАТ =============")
+    print("Статус:", status)
     if status == "optimal":
-        print("Optimal solution x* =", x)
-        print("Optimal value =", obj)
+        print("Оптимальное решение x* =", x)
+        print("Оптимальное значение =", obj)
     elif status == "unbounded":
-        print("The problem is unbounded.")
+        print("Целевая функция не ограничена (unbounded).")
     else:
-        print("No feasible solution (infeasible).")
-    print("===================\n")
+        print("Система несовместна (infeasible).")
+    print("====================================\n")
 
 
 if __name__ == "__main__":
