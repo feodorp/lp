@@ -2,10 +2,12 @@ import numpy as np
 import sys
 import argparse
 
+from utils import pivot_operation
+
 # global vars
 eps = 0.00001
 
-def PrimalSimplex(c, A, b, basis=None, nbasis=None):
+def PrimalSimplex(c, A, b, basis=None, nbasis=None, return_basis=False):
     #  max c^T x
     #  Ax = b
     #  x >= 0
@@ -18,55 +20,94 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
     if basis is None or nbasis is None:
         basis = list(range(n, n + m))
         nbasis = list(range(0, n))
+    else:
+        assert len(basis) == m, f"Basis has {len(basis)} variables instead of {m}."
+        assert len(nbasis) == n, f"Non-Basis has {len(nbasis)} variables instead of {n}."
 
     while True:
-        # Подсказка: np.linalg.solve(M, v) решает систему Mx = v
+        idx_b, idx_n = np.array(basis), np.array(nbasis)
+        B, N = A[:, idx_b], A[:, idx_n]
+        c_b, c_n = c[idx_b], c[idx_n]
 
-        # TODO: Посчитать reduced cost's 
-        reduced_cost = ...
+        # Подсказка: np.linalg.solve(M, v) решает систему Mx = v
+        B_inv = np.linalg.inv(B)
+        x_b = B_inv @ b
+
+        # TODO: Посчитать reduced cost's
+        y = B_inv.T @ c_b
+        r_n = c_n - N.T @ y
 
         # TODO: Находим кандидата для входа в базис
-        entering_index = ...
+        j = np.argmax(r_n)
+        entering_index = idx_n[j]
+        if r_n[j] < eps:
+            break
 
         # TODO: Вычисляем направление, не забывая детектировать unbounded
-        d = ...
+        d = (B_inv @ A[:, entering_index].reshape(-1, 1)).ravel()  # partial derivatives
+        if np.all(d < eps):
+            return "unbounded", None, None
 
         # TODO: Найти кандидата для выхода из базиса
-        leaving_index = ...
-        
-        # TODO: Обновляем basis и nbasis
-        basis = ...
-        nbasis = ...
+        d_pos_args = np.array([i for i in range(len(d)) if d[i] > eps])
+        d_pos, x_b_pos = d[d_pos_args], x_b[d_pos_args]
+        theta = x_b_pos / d_pos
+        l = np.argmin(theta)
+        leaving_index = idx_b[d_pos_args[l]]
 
-    # TODO: Восстановить исходную систему, восстановить x и вернуть результат
-    return "optimal", ..., ...
+        # TODO: Обновляем basis и nbasis
+        basis, nbasis = pivot_operation(basis, nbasis, leaving_index, entering_index)
+
+    # TODO: Восстановить исходную систему, восстановить x и вернуть результат
+    z_star = c_b.T @ x_b
+    x_star = np.zeros(n + m)
+    x_star[idx_b] = x_b
+
+    x_star_initial = x_star[:n]
+
+    result = "optimal", x_star_initial, z_star
+    if return_basis:
+        return *result, basis, nbasis
+    return result
 
 
 def Phase1(c, A, b):
-    # TODO: Создаем вспомогательную задачу
-    new_c = ...
-    new_A = ...
-    basis = ...
-    nbasis = ...
+    m, n = A.shape
 
-    status, x, obj = PrimalSimplex(new_c, new_A, b, basis, nbasis)
+    # TODO: Создаем вспомогательную задачу
+    # x_0 + initial variables + slacks -> 1 + m + n variables
+    new_c = np.concatenate([np.array([-1]), np.zeros(m + n)])
+    new_A = np.concatenate([np.ones((m, 1)), A, np.eye(m)], axis=1)
+    basis = list(range(1 + n, 1 + n + m))
+    nbasis = list(range(0, 1 + n))
+
+    # force x_0 into basis
+    leaving_index = np.argmin(b) + (1 + n)
+    entering_index = 0
+
+    basis, nbasis = pivot_operation(basis, nbasis, leaving_index, entering_index)
+
+    status, _, obj, basis, nbasis = PrimalSimplex(new_c, new_A, b, basis, nbasis, return_basis=True)
     if status != "optimal" or obj > eps:
         return "infeasible", None, None
-    
+
     # TODO: Нужно восстановить исходную задачу
-    c = ...
-    A = ...
-    basis = ...
-    nbasis = ...
+    c = np.concatenate([c, np.zeros(m)])
+    A = np.concatenate([A, np.eye(m)], axis=1)
+    basis = np.array([i for i in basis if i != 0]) - 1
+    nbasis = np.array([i for i in nbasis if i != 0]) - 1
 
-    return PrimalSimplex(c, A, b, basis, nbasis)
-
+    return PrimalSimplex(c, A, b, basis.tolist(), nbasis.tolist())
 
 def Solve(c, A, b):
     if np.all(b >= 0):
         # TODO: Добавляем слаки в систему
+        # initial variables + slacks
+        m = A.shape[0]
+        c = np.concatenate([c, np.zeros(m)])
+        A = np.concatenate([A, np.eye(m)], axis=1)
         return PrimalSimplex(c, A, b)
-    
+
     # Иначе запускаем фазу 1
     return Phase1(c, A, b)
 
