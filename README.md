@@ -29,7 +29,7 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
 <details><summary>Вывод программы</summary><p>
 
 <pre>
-$ python simplex_template --filename example_phase1.txt
+$ python simplex_template example_phase1.txt
 n = 2
 m = 3
 A = [[-1.  1.]
@@ -43,7 +43,7 @@ Result:
 Status: unbounded
 The problem is unbounded.
 
-$ python simplex_template --filename example_phase2.txt
+$ python simplex_template example_phase2.txt
 n = 3
 m = 4
 c = [3. 2. 1.]
