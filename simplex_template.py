@@ -2,8 +2,10 @@ import numpy as np
 import sys
 import argparse
 
+import lu
+
 # global vars
-eps = 0.00001
+eps = 1e-9
 
 def PrimalSimplex(c, A, b, basis=None, nbasis=None):
     #  max c^T x
@@ -19,20 +21,31 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
         basis = list(range(n, n + m))
         nbasis = list(range(0, n))
 
-    tmp = 0
-    while tmp < 100:
-        tmp += 1
+    B = A[:, basis]
+    
+    L, U = lu.lu_factor(B)
+    
+    iteration_count = 0
+    max_iterations = 1000
+    
+    while iteration_count < max_iterations:
+        iteration_count += 1
 
-        B = A[:, basis]
+        # B = A[:, basis]
         N = A[:, nbasis]
         cB = c[basis]
         cN = c[nbasis]
 
         try:
-            bbar = np.linalg.solve(B, b)
-            y = np.linalg.solve(B.T, cB)
+            # bbar = np.linalg.solve(B, b)
+            bbar = lu.solve_B_with_LU(L, U, b)
+
+            # y = np.linalg.solve(B.T, cB)
+            y = lu.solve_Bt_with_LU(L, U, cB)
+            
             rN = cN - (N.T).dot(y)
-            z0 = cB.T.dot(bbar)
+            
+            # z0 = cB.T.dot(bbar)
         except:
             return "infeasible", None, None
 
@@ -57,24 +70,23 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
         
 
         # TODO: Вычисляем направление, не забывая детектировать unbounded
-        aj = A[:, entering_index]
-        d = np.linalg.solve(B, aj)
+        aj = A[:, nbasis[entering_index]]
+        # d = np.linalg.solve(B, aj)
+        d = lu.solve_B_with_LU(L, U, aj)
 
         if np.all(d <= eps):
             return "unbounded", None, None
 
         # TODO: Найти кандидата для выхода из базиса
-        min_i = 0
-        min_rat = np.inf
-        for i, d_i in enumerate(d):
-            if d_i > eps:
-                rat = bbar[i] / d_i
-                if rat < min_rat:
-                    min_rat = rat
-                    min_i = i
-
-        leaving_index = min_i
+        min_ratio = np.inf
+        leaving_index = -1
         
+        for i, (bbar_i, d_i) in enumerate(zip(bbar, d)):
+            if d_i > eps:
+                ratio = bbar_i / d_i
+                if ratio < min_ratio:
+                    min_ratio = ratio
+                    leaving_index = i
         
         # TODO: Обновляем basis и nbasis
         entering_var = nbasis[entering_index]
@@ -83,8 +95,13 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
         basis[leaving_index] = entering_var
         nbasis[entering_index] = leaving_var
 
+        # Обновим нашу матрицу
+        L, U = lu.update_lu(L, U, leaving_index, aj)
+
+
     # TODO: Восстановить исходную систему, восстановить x и вернуть результат
     # (сделано в теле while)
+
     return "iteration limit", None, None
 
 
@@ -147,10 +164,8 @@ def proc_cmd():
 
 def main():
     # boilerplate for reading input data
-
-    # args = proc_cmd()
-    # with open(args.filename, 'r', encoding='utf-8') as f:
-    with open("example_phase1.txt", 'r', encoding='utf-8') as f:
+    args = proc_cmd()
+    with open(args.filename, 'r', encoding='utf-8') as f:
         n, m = map(int, f.readline().split())
         c = np.array(list(map(float, f.readline().split())))
         A = []
@@ -181,3 +196,90 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+
+
+def PrimalSimplex_without_LU(c, A, b, basis=None, nbasis=None):
+    #  max c^T x
+    #  Ax = b
+    #  x >= 0
+    #  n - число переменных
+    #  m - число ограничений
+    #  Да, действительно, считаем что n > m (с учетом слаков)
+    # Предполагаем что проблема точно feasible но возможно unbounded
+    m, n = A.shape
+    n -= m
+    if basis is None or nbasis is None:
+        basis = list(range(n, n + m))
+        nbasis = list(range(0, n))
+
+    tmp = 0
+    while tmp < 100:
+        tmp += 1
+
+        B = A[:, basis]
+        N = A[:, nbasis]
+        cB = c[basis]
+        cN = c[nbasis]
+
+        try:
+            bbar = np.linalg.solve(B, b)
+            y = np.linalg.solve(B.T, cB)
+            rN = cN - (N.T).dot(y)
+            z0 = cB.T.dot(bbar)
+        except:
+            return "infeasible", None, None
+
+        # TODO: Посчитать reduced cost's 
+        reduced_cost = rN
+
+        # Проверка на оптимальность решения
+        if np.all(reduced_cost <= eps):
+            x = np.zeros(n + m)
+            for i, bi in enumerate(basis):
+                x[bi] = bbar[i]
+            obj = c.dot(x)
+            return "optimal", x, obj
+
+        # TODO: Находим кандидата для входа в базис
+        # Использую правило Блэнда
+        entering_index = 0
+        for i, val in enumerate(reduced_cost):
+            if val > eps:
+                entering_index = i
+                break
+        
+
+        # TODO: Вычисляем направление, не забывая детектировать unbounded
+        aj = A[:, nbasis[entering_index]]
+        d = np.linalg.solve(B, aj)
+
+        if np.all(d <= eps):
+            return "unbounded", None, None
+
+        # TODO: Найти кандидата для выхода из базиса
+        min_i = 0
+        min_rat = np.inf
+        for i, d_i in enumerate(d):
+            if d_i > eps:
+                rat = bbar[i] / d_i
+                if rat < min_rat:
+                    min_rat = rat
+                    min_i = i
+
+        leaving_index = min_i
+        
+        
+        # TODO: Обновляем basis и nbasis
+        entering_var = nbasis[entering_index]
+        leaving_var = basis[leaving_index]
+
+        basis[leaving_index] = entering_var
+        nbasis[entering_index] = leaving_var
+
+    # TODO: Восстановить исходную систему, восстановить x и вернуть результат
+    # (сделано в теле while)
+
+    return "iteration limit", None, None
