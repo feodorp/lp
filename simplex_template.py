@@ -84,6 +84,7 @@ class LU:
         v = self.U @ d
         
         L, H = self.L.copy(), self.U.copy()
+        H[:, p] = v
         for k in range(m - 1, p + 1, -1):
             piv = H[k - 1, p]
             if abs(piv) < eps:
@@ -93,7 +94,6 @@ class LU:
                 H[k, p:] -= alpha * H[k - 1, p:]
                 L[:, k - 1] += alpha * L[:, k]
 
-        H[:, p] = v
         for k in range(p, m-1):
             piv = H[k, k]
             if abs(piv) < eps:
