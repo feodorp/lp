@@ -1,9 +1,62 @@
 import numpy as np
 import sys
 import argparse
-
+import scipy
 # global vars
 eps = 0.00001
+class UpdatableMatrix:
+    def __init__(self, A, eps):
+        self.P, self.L, self.U = scipy.linalg.lu(A)
+        self.eps = eps
+        self.n = A.shape[0]
+        self.G = np.eye(self.n)
+        self.G_inv = np.eye(self.n)
+        # self.G_inv_t = np.eye(self.n)
+    def update_column(self, idx, values: np.ndarray):
+        values = values.reshape(-1, 1)
+        v = self.G_inv @ scipy.linalg.solve_triangular(self.L, self.P.T @ values, lower=True)
+        self.U[:, idx] = v.flatten()
+        p = self.n - 1
+        while p > idx and abs(self.U[p][idx]) < self.eps:
+            p -= 1
+        transitions = []
+        for i in range(idx + 1, p):
+            coef = self.U[i][idx] / self.U[p][idx]
+            self.U[i] -= coef * self.U[p]
+            transitions.append((i, coef, p))
+        if p != idx:
+            if abs(self.U[idx][idx]) < self.eps:
+                self.U[idx] -= self.U[p]
+                transitions.append((idx, 1.0, p))
+            coef = self.U[p][idx] / self.U[idx][idx]
+            self.U[p] -= coef * self.U[idx]
+            transitions.append((p, coef, idx))
+            for i in range(idx + 1, p):
+                if abs(self.U[p][i]) < self.eps:
+                    continue
+                coef = self.U[p][i] / self.U[i][i]
+                self.U[p] -= coef * self.U[i]
+                transitions.append((p, coef, i))
+        for i, coef, j in transitions:
+            self.G[:, j] += coef * self.G[:, i]
+            self.G_inv[i] -= coef * self.G_inv[j]
+
+    def solve(self, b: np.ndarray, transpose=False):
+        b = b.flatten()
+        if not transpose:
+            b = self.P.T @ b
+            b = scipy.linalg.solve_triangular(self.L, b, lower=True)
+            b = self.G_inv @ b
+            b = scipy.linalg.solve_triangular(self.U, b, lower=False)
+        else:
+            b = scipy.linalg.solve_triangular(self.U.T, b, lower=True)
+            b = self.G_inv.T @ b
+            b = scipy.linalg.solve_triangular(self.L.T, b, lower=False)
+            b = self.P @ b
+        return b
+
+
+
 
 def PrimalSimplex(c, A, b, basis=None, nbasis=None):
     #  max c^T x
@@ -18,46 +71,59 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
     if basis is None or nbasis is None:
         basis = list(range(n, n + m))
         nbasis = list(range(0, n))
-
+    B = UpdatableMatrix(A[:, basis], eps)
+    N = A[:, nbasis]
     while True:
         # Подсказка: np.linalg.solve(M, v) решает систему Mx = v
 
         # TODO: Посчитать reduced cost's 
-        reduced_cost = ...
+        y = B.solve(c[basis], transpose=True)
+        reduced_cost = c[nbasis] - (N.T @ y).reshape(-1)
 
         # TODO: Находим кандидата для входа в базис
-        entering_index = ...
-
+        if reduced_cost.max() <= eps:
+            break
+        entering_index = np.random.choice(np.arange(n)[reduced_cost > eps])
+        entering_index = np.argmax(reduced_cost)
         # TODO: Вычисляем направление, не забывая детектировать unbounded
-        d = ...
+        d = B.solve(A[:, nbasis[entering_index]])
+        if d.max() <= eps:
+            return "unbounded", None, None
 
         # TODO: Найти кандидата для выхода из базиса
-        leaving_index = ...
-        
+        leaving_index = np.argmin(B.solve(b)[d > eps] / d[d > eps])
+        leaving_index = np.arange(m)[d > eps][leaving_index]
         # TODO: Обновляем basis и nbasis
-        basis = ...
-        nbasis = ...
+        B.update_column(leaving_index, N[:, entering_index])
+        basis[leaving_index], nbasis[entering_index] = nbasis[entering_index], basis[leaving_index]
+        N = A[:, nbasis]
 
-    # TODO: Восстановить исходную систему, восстановить x и вернуть результат
-    return "optimal", ..., ...
-
+    # TODO: Восстановить исходную систему, восстановить x и вернуть результат
+    x = np.zeros(n + m)
+    x[basis] = B.solve(b)
+    return "optimal", x, c.T @ x
 
 def Phase1(c, A, b):
     # TODO: Создаем вспомогательную задачу
-    new_c = ...
-    new_A = ...
-    basis = ...
-    nbasis = ...
-
+    m, n = A.shape
+    new_c = np.concatenate([np.zeros(m + n), -np.ones(1)])
+    new_A = np.concatenate([A, np.eye(m), -np.ones(m)[:, None]], axis=1)
+    basis = list(range(n, n + m + 1))
+    nbasis = list(range(0, n))
+    p = np.argmin(b)
+    basis.remove(p + n)
+    nbasis.append(p + n)
     status, x, obj = PrimalSimplex(new_c, new_A, b, basis, nbasis)
     if status != "optimal" or obj > eps:
         return "infeasible", None, None
     
     # TODO: Нужно восстановить исходную задачу
-    c = ...
-    A = ...
-    basis = ...
-    nbasis = ...
+    c = np.concatenate([c, np.zeros(m)])
+    A = np.concatenate([A, np.eye(m)], axis=1)
+    if m + n in basis:
+        basis.remove(m + n)
+    if m + n in nbasis:
+        nbasis.remove(m + n)
 
     return PrimalSimplex(c, A, b, basis, nbasis)
 
@@ -65,7 +131,11 @@ def Phase1(c, A, b):
 def Solve(c, A, b):
     if np.all(b >= 0):
         # TODO: Добавляем слаки в систему
-        return PrimalSimplex(c, A, b)
+        m, n = A.shape
+        a, b, c = PrimalSimplex(np.concatenate([c, np.zeros(m)]), np.concatenate([A, np.eye(m)], axis=1), b)
+        if b is not None:
+            b = b[:n]
+        return a, b, c
     
     # Иначе запускаем фазу 1
     return Phase1(c, A, b)
