@@ -151,22 +151,35 @@ def revised_simplex(A: np.ndarray, b: np.ndarray, c: np.ndarray,
 
 def phase1(c: np.ndarray, A: np.ndarray, b: np.ndarray):
     m, n = A.shape
+
+    # если есть отрицательные элементы в b — инвертируем соответствующие строки
+    for i in range(m):
+        if b[i] < 0:
+            A[i, :] *= -1
+            b[i] *= -1
+
     I = np.eye(m)
     A_full = np.hstack([A, I, I])
     c_full = np.hstack([np.zeros(n + m), -np.ones(m)])
+
     B_idx = list(range(n + m, n + m + m))
     N_idx = [j for j in range(n + m + m) if j not in B_idx]
+
     status_I, x_full, obj_I = revised_simplex(A_full, b, c_full, B_idx, N_idx)
+
     PHASE1_EPS = 1e-7
     if status_I != "optimal" or obj_I > PHASE1_EPS:
         return "infeasible", None, None
+
     A_no_a = A_full[:, :n + m]
     B_idx2 = [j for j in B_idx if j < n + m]
     if not B_idx2:
         B_idx2 = list(range(n, n + m))
     N_idx2 = [j for j in range(n + m) if j not in B_idx2]
+
     c_ext = np.hstack([c, np.zeros(m)])
     return revised_simplex(A_no_a, b, c_ext, B_idx2, N_idx2)
+
 
 
 # ===================================================
