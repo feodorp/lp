@@ -25,7 +25,7 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
 
 
 ## Вывод программы на питоне
-```b
+
 <details><summary>Вывод программы</summary><p>
 
 <pre>
@@ -62,6 +62,5 @@ Optimal value = 70.0
 </pre>
 
 </p></details>
-```
 
 ---
