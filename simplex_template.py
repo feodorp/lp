@@ -4,9 +4,28 @@ import argparse
 import scipy
 # global vars
 eps = 0.00001
+
+
+def lu_decomposition_pivot(A):
+    n = len(A)
+    P = np.eye(n)
+    L = np.eye(n)
+    U = A.copy()
+    for k in range(n - 1):
+        pivot = np.argmax(np.abs(U[k:, k])) + k
+        if pivot != k:
+            U[[k, pivot]] = U[[pivot, k]]
+            P[[k, pivot]] = P[[pivot, k]]
+            if k > 0:
+                L[[k, pivot], :k] = L[[pivot, k], :k]
+        for i in range(k + 1, n):
+            L[i, k] = U[i, k] / U[k, k]
+            U[i, k:] -= L[i, k] * U[k, k:]
+
+    return P.T, L, U
 class UpdatableMatrix:
     def __init__(self, A, eps):
-        self.P, self.L, self.U = scipy.linalg.lu(A)
+        self.P, self.L, self.U = lu_decomposition_pivot(A)
         self.eps = eps
         self.n = A.shape[0]
         self.G = np.eye(self.n)
