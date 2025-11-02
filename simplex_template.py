@@ -3,7 +3,7 @@ import sys
 import argparse
 
 # global vars
-eps = 10**-9
+eps = 10**-6
 
 def lu_decomposition(B):
     m = B.shape[0]
@@ -60,7 +60,7 @@ def solve_transpose(L, U, rhs):
         w[i] = (rhs[i] - s) / U[i, i]
     y = np.zeros_like(rhs, dtype=float)
     for i in range(m - 1, -1, -1):
-        s = float(np.dot(L[i, i + 1 :], y[i + 1 :]))
+        s = float(np.dot(L[i + 1 :, i], y[i + 1 :]))
         y[i] = w[i] - s
     return y
 
@@ -71,16 +71,14 @@ def update(L, U, a_j, p):
     H = U.copy()
     H[:, p] = v
     L_new = L.copy()
-    for i in range(p, m - 1):
-        pivot = H[i, p]
+    for k in range(p, m - 1):
+        pivot = H[k, k]
         if abs(pivot) < eps:
             raise np.linalg.LinAlgError("Zero pivot in update")
-        below = H[i + 1, p]
-        alpha = below / pivot
-        H[i + 1, :] -= alpha * H[i, :]
-        L_new[:, i + 1] += alpha * L_new[:, i]
-    U_new = H
-    return L_new, U_new
+        alpha = H[k + 1, k] / pivot
+        H[k + 1, k:] -= alpha * H[k, k:]
+        L_new[:, k + 1] += alpha * L_new[:, k]
+    return L_new, H
 
 
 def PrimalSimplex(c, A, b, basis=None, nbasis=None):
@@ -91,121 +89,96 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
     #  m - число ограничений
     #  Да, действительно, считаем что n > m (с учетом слаков)
     # Предполагаем что проблема точно feasible но возможно unbounded
-    m, n = A.shape
-    n = n - m
-
+    m, n_full = A.shape
+    n = n_full - m
     if basis is None or nbasis is None:
         basis = list(range(n, n + m))
         nbasis = list(range(0, n))
 
     B = A[:, basis]
-    try:
-        L, U = lu_decomposition(B)
-    except np.linalg.LinAlgError:
-        L, U = lu_decomposition(B + eps * np.eye(m))
+    L, U = lu_decomposition(B)
+
+    max_iter = 200000
+    it = 0
 
     while True:
-        cB = c[basis]
-        cN = c[nbasis]
+        it += 1
+        if it > max_iter:
+            return "stopped_by_iter_limit", None, None
 
-        try:
-            y = solve_transpose(L, U, cB)
-        except np.linalg.LinAlgError:
-            y = solve_transpose(L + eps * np.eye(m), U + eps * np.eye(m), cB)
+        cB, cN = c[basis], c[nbasis]
+        y = solve_transpose(L, U, cB)
+        reduced = cN - A[:, nbasis].T @ y
 
-        reduced_cost = cN - A[:, nbasis].T @ y
-
-        if np.max(reduced_cost) < eps:
-            try:
-                bbar = solve(L, U, b)
-            except np.linalg.LinAlgError:
-                bbar = solve(L + eps * np.eye(m), U + eps * np.eye(m), b)
-
+        if np.max(reduced) < eps:
+            bbar = solve(L, U, b)
             x_full = np.zeros(n + m)
             x_full[basis] = bbar
-            x_direct = x_full[:n]
-            obj = float(c[:n].dot(x_direct))
-            return "optimal", x_direct, obj
+            x_dir = x_full[:n]
+            return "optimal", x_dir, float(c[:n] @ x_dir)
 
-        entering_pos = None
-        for pos, val in enumerate(reduced_cost):
-            if val > eps:
-                entering_pos = pos
-                break
-
-        entering_index = nbasis[entering_pos]
+        entering_index = min(j for j, rc in zip(nbasis, reduced) if rc > eps)
+        entering_pos = nbasis.index(entering_index)
         a_j = A[:, entering_index]
-
-        try:
-            d = solve(L, U, a_j)
-        except np.linalg.LinAlgError:
-            d = solve(L + eps * np.eye(m), U + eps * np.eye(m), a_j)
-
+        d = solve(L, U, a_j)
         if np.max(d) < eps:
             return "unbounded", None, None
 
-        try:
-            bbar = solve(L, U, b)
-        except np.linalg.LinAlgError:
-            bbar = solve(L + eps * np.eye(m), U + eps * np.eye(m), b)
+        bbar = solve(L, U, b)
+        ratios = [(bbar[i] / d[i], basis[i], i) for i in range(m) if d[i] > eps]
+        if not ratios:
+            return "unbounded", None, None
+        theta, leaving_index, p = min(ratios, key=lambda t: (t[0], t[1]))
 
-        p = None
-        theta = None
-        for i in range(m):
-            if d[i] > eps:
-                val = bbar[i] / d[i]
-                if (
-                    (theta is None)
-                    or (val < theta - eps)
-                    or (abs(val - theta) <= eps and (p is None or i < p))
-                ):
-                    theta = val
-                    p = i
-
-        leaving_index = basis[p]
-
+        basis_new = basis.copy()
+        basis_new[p] = entering_index
         try:
             L_new, U_new = update(L, U, a_j, p)
-            basis[p] = entering_index
-            nbasis[entering_pos] = leaving_index
-            L, U = L_new, U_new
-        except np.linalg.LinAlgError:
-            basis_new = basis.copy()
-            basis_new[p] = entering_index
             Bnew = A[:, basis_new]
-            try:
-                L_new, U_new = lu_decomposition(Bnew)
-            except np.linalg.LinAlgError:
-                L_new, U_new = lu_decomposition(Bnew + eps * np.eye(m))
-            basis = basis_new
+            resid = np.linalg.norm(Bnew - L_new @ U_new, ord=np.inf)
+            if resid > 1e-6:
+                raise np.linalg.LinAlgError
+            basis, L, U = basis_new, L_new, U_new
             nbasis[entering_pos] = leaving_index
-            L, U = L_new, U_new
+        except np.linalg.LinAlgError:
+            Bnew = A[:, basis_new]
+            L_new, U_new = lu_decomposition(Bnew + eps * np.eye(m))
+            basis, L, U = basis_new, L_new, U_new
+            nbasis[entering_pos] = leaving_index
 
 
 def Phase1(c, A, b):
     m, n = A.shape
     I = np.eye(m)
+
     A_slack = np.hstack([A, I])
-    a0 = -np.ones((m, 1))
-    new_A = np.hstack([A_slack, a0])
-    new_c = np.concatenate([np.zeros(n + m), np.array([-1.0])])
-    basis = list(range(n, n + m))
-    nbasis = list(range(0, n)) + [n + m]
+    A_phase1 = np.hstack([A_slack, I])
+    c_phase1 = np.concatenate([np.zeros(n + m), -np.ones(m)])
 
-    if np.max(b) < eps:
-        p = int(np.argmin(b))
-        basis[p] = n + m
-        nbasis = list(range(0, n)) + [n + i for i in range(m) if i != p]
+    basis = list(range(n + m, n + 2 * m))
+    nbasis = list(range(0, n + m))
 
-    status, x, obj = PrimalSimplex(new_c, new_A, b, basis, nbasis)
+    status, _, obj = PrimalSimplex(c_phase1, A_phase1, b, basis, nbasis)
+
     if status != "optimal" or obj < -eps:
         return "infeasible", None, None
 
-    A = new_A[:, : (n + m)]
-    c = np.concatenate([c, np.zeros(m)])
-    basis = list(range(n, n + m))
-    nbasis = list(range(0, n))
-    return PrimalSimplex(c, A, b, basis, nbasis)
+    A_new = A_slack
+    c_new = np.concatenate([c, np.zeros(m)])
+
+    basis_new = []
+    for j in basis:
+        if j < n + m:
+            basis_new.append(j)
+        else:
+            for k in range(n + m):
+                if k not in basis_new and abs(A_new[:, k][basis.index(j)]) > eps:
+                    basis_new.append(k)
+                    break
+
+    nbasis_new = [j for j in range(n + m) if j not in basis_new]
+
+    return PrimalSimplex(c_new, A_new, b, basis_new, nbasis_new)
 
 
 def Solve(c, A, b):
@@ -214,7 +187,7 @@ def Solve(c, A, b):
         A = np.hstack([A, np.eye(m)])
         c = np.concatenate([c, np.zeros(m)])
         return PrimalSimplex(c, A, b)
-    
+
     # Иначе запускаем фазу 1
     return Phase1(c, A, b)
 
