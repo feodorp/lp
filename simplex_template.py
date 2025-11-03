@@ -142,7 +142,7 @@ def PrimalSimplex(c, A, b, basis=None, nbasis=None):
             nbasis[entering_pos] = leaving_index
         except np.linalg.LinAlgError:
             Bnew = A[:, basis_new]
-            L_new, U_new = lu_decomposition(Bnew + eps * np.eye(m))
+            L_new, U_new = lu_decomposition(Bnew)
             basis, L, U = basis_new, L_new, U_new
             nbasis[entering_pos] = leaving_index
 
