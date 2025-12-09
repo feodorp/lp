@@ -83,100 +83,101 @@ def update(L, U, a_j, p):
 
 
 def DualSimplex(c, A, b, max_iters=5000):
+    c = np.asarray(c, dtype=float)
+    A = np.asarray(A, dtype=float)
+    b = np.asarray(b, dtype=float)
     m, n = A.shape
 
     A_full = np.hstack([A, np.eye(m, dtype=float)])
     c_full = np.concatenate([c, np.zeros(m, dtype=float)])
+    total = n + m
 
-    if m > 0:
-        bigU = 1.0 + max(1.0, float(np.max(np.abs(b))))
-    else:
-        bigU = 2.0
-    U_full = np.full(n + m, bigU, dtype=float)
+    scale = 1.0
+    if A.size > 0:
+        scale = max(scale, float(np.max(np.abs(A))))
+    if b.size > 0:
+        scale = max(scale, float(np.max(np.abs(b))))
+    if c.size > 0:
+        scale = max(scale, float(np.max(np.abs(c))))
+    bigU = 1e6 * scale
+    U_full = np.full(total, bigU, dtype=float)
 
-    B = list(range(n, n + m))
-    N = list(range(n))
+    basis = list(range(n, total))
+    nbasis = list(range(n))
 
-    d = np.zeros(n + m, dtype=float)
+    for _ in range(max_iters):
+        B_mat = A_full[:, basis]
 
-    for it in range(max_iters):
-        B_mat = A_full[:, B]
         try:
             L, Ufac = lu_decomposition(B_mat)
+
+            def bs(rhs):
+                return solve(L, Ufac, rhs)
+
+            def bsT(rhs):
+                return solve_transpose(L, Ufac, rhs)
+
         except np.linalg.LinAlgError:
-            return "infeasible", None, None
 
-        y = solve_transpose(L, Ufac, c_full[B])
+            def bs(rhs, B_mat=B_mat):
+                return np.linalg.solve(B_mat, rhs)
 
-        N_mat = A_full[:, N]
-        cbar_N = c_full[N] - N_mat.T @ y
+            def bsT(rhs, B_mat=B_mat):
+                return np.linalg.solve(B_mat.T, rhs)
 
-        x_full = np.zeros(n + m, dtype=float)
+        y = bsT(c_full[basis])
 
-        for k_pos, j in enumerate(N):
-            if d[j] == 0.0:
-                if cbar_N[k_pos] <= eps:
-                    d[j] = +1.0
-                    x_full[j] = 0.0
-                else:
-                    d[j] = -1.0
-                    x_full[j] = U_full[j]
-            else:
-                x_full[j] = 0.0 if d[j] > 0 else U_full[j]
+        N_mat = A_full[:, nbasis]
+        c_bar = c_full[nbasis] - N_mat.T @ y
 
-        rhs = b - A_full[:, N] @ x_full[N]
+        d_N = np.where(c_bar > eps, -1.0, 1.0)
+        x_N = np.where(c_bar > eps, U_full[nbasis], 0.0)
+
+        r = d_N * c_bar
+
+        rhs = b - N_mat @ x_N
         try:
-            x_B = solve(L, Ufac, rhs)
+            x_B = bs(rhs)
         except np.linalg.LinAlgError:
             return "infeasible", None, None
 
-        for pos, j in enumerate(B):
-            x_full[j] = x_B[pos]
+        if np.all(x_B >= -eps) and np.all(r <= eps):
+            x_full = np.zeros(total, dtype=float)
+            x_full[basis] = x_B
+            x_full[nbasis] = x_N
 
-        y = solve_transpose(L, Ufac, c_full[B])
-        N_mat = A_full[:, N]
-        cbar_N = c_full[N] - N_mat.T @ y
-        r_N = np.array([d[N[i]] * cbar_N[i] for i in range(len(N))], dtype=float)
-
-        if np.all(x_B >= -eps) and np.all(r_N <= eps):
-            if np.all(cbar_N <= eps):
-                x_star = x_full[:n]
-                obj = float(np.dot(c, x_star))
-                return "optimal", x_star, obj
-            else:
+            if np.any(x_full[:n] >= U_full[:n] - eps):
                 return "unbounded", None, None
 
-        neg_rows = [i for i, val in enumerate(x_B) if val < -1e-8]
-        if not neg_rows:
+            x_star = x_full[:n]
+            obj = float(np.dot(c, x_star))
+            return "optimal", x_star, obj
+
+        neg_rows = np.flatnonzero(x_B < -eps)
+        if neg_rows.size == 0:
+            return "infeasible", None, None
+        leave_pos = int(neg_rows[0])
+        leaving_idx = basis[leave_pos]
+
+        e_i = np.zeros(m, dtype=float)
+        e_i[leave_pos] = 1.0
+        w = bsT(e_i)
+        sigma = -(w @ N_mat) * d_N
+
+        valid_mask = sigma > eps
+        if not np.any(valid_mask):
             return "infeasible", None, None
 
-        i_pos = min(neg_rows, key=lambda idx: x_B[idx])
-        i_glob = B[i_pos]
+        ratios = np.full(len(nbasis), np.inf)
+        ratios[valid_mask] = -r[valid_mask] / sigma[valid_mask]
 
-        e = np.zeros(m, dtype=float)
-        e[i_pos] = 1.0
-        w = solve_transpose(L, Ufac, e)
+        min_ratio = np.min(ratios[valid_mask])
+        cand_pos = np.flatnonzero((ratios <= min_ratio + 1e-12) & valid_mask)
+        enter_pos = int(min(cand_pos, key=lambda pos: nbasis[pos]))
+        entering_idx = nbasis[enter_pos]
 
-        sigma = []
-        for j in N:
-            a_j = A_full[:, j]
-            a_hat_ij = float(np.dot(w, a_j))
-            sigma.append(-a_hat_ij * d[j])
-        sigma = np.array(sigma, dtype=float)
-
-        cand = [k for k, sig in enumerate(sigma) if sig > 1e-8]
-        if not cand:
-            return "unbounded", None, None
-
-        ratios = [(-r_N[k] / sigma[k], k) for k in cand]
-        t, j_pos = min(ratios, key=lambda pair: (pair[0], N[pair[1]]))
-        j_glob = N[j_pos]
-
-        B[i_pos] = j_glob
-        N[j_pos] = i_glob
-
-        d[i_glob] = +1.0
-        d[j_glob] = 0.0
+        basis[leave_pos] = entering_idx
+        nbasis[enter_pos] = leaving_idx
 
     return "max_iters", None, None
 
